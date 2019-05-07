@@ -10,7 +10,7 @@
 //of clock cycles into r0. for more information refer to pages 797 - 801  
 //of the ARMv7-m Architecture Reference Manual
 
-//if you're using the macros don't forget to add ".include "CYCCNT_lib.s"" in
+//if you're using the macros don't forget to add '.include "libcomp2300/cyccnt.S"' in
 //your main file
 
 //A macro to read the current value of the cycle count register
