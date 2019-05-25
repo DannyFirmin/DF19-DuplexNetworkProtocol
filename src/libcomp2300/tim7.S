@@ -93,7 +93,11 @@ tim7_init:
   @ NOTE: you MAY want to configure the priority of TIM7.
   @ put your code here if that's the case
 
-  
+  @ ====MY CODE STARTS====
+  mov r0, #55 @ TIM7 is at position 55 as mentioned above
+  mov r1, #3
+  bl NVIC_IPR_set_priority
+  @ =====MY CODE ENDS=====
   bl sync
   pop {r4-r5, lr}
   bx lr
@@ -106,16 +110,14 @@ TIM7_IRQHandler:
   push {lr}
 
   @ Your interrupt handler code goes here
+  bl timer_handler  
 
-  
   @ Clear interrupt (Section 29.4.4)
   ldr r0, =ADR_TIM7
   ldr r1, =OFS_TIMx_SR
   mov r2, 0
   bl clear_bit
-
   bl sync
-  
   pop {lr}
   bx lr
 .size TIM7_IRQHandler, .-TIM7_IRQHandler
