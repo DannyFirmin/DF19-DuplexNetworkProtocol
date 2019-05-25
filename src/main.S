@@ -1,5 +1,5 @@
 .syntax unified
-.global main, EXTI0_IRQHandler, EXTI1_IRQHandler, EXTI3_IRQHandler
+.global main, EXTI0_IRQHandler, EXTI1_IRQHandler, EXTI3_IRQHandler, pointer_outof_bound
 .include "libcomp2300/macros.S"
 
 @ --- PIN CONNECTIONS ---
@@ -50,9 +50,21 @@ main:
   mov r1, #1
   bl NVIC_IPR_set_priority
 
-  mov r0, #7
-  mov r1, #1
-  bl NVIC_IPR_set_priority
+  @ mov r0, #7
+  @ mov r1, #1
+  @ bl NVIC_IPR_set_priority
+
+ @ Init Sound playing
+  bl init
+  ldr r1, =p2300_sequence
+  ldr r0, [r1]
+  mov r1, 0x7FFF
+  bl wave_change
+
+  @ Use Timer7, seconds between interrupts = 0.25s
+  mov r0, #20000
+  mov r1, #1000
+  bl tim7_init
 
 
 .size main, .-main
@@ -93,54 +105,9 @@ EXTI0_IRQHandler:
 @ Receiver for Line "Clock"
 .type EXTI1_IRQHandler, %function
 EXTI1_IRQHandler:
-push {lr,r4-r10}
-  ldr r1, =part2_song_pointer
-  ldr r0, [r1] @ Load array poisiton into r0
-  ldr r1, =part2_song
-  lsl r2, r0, #2 @ Calculate the offset based on pointer value, r2 = r0 * 4, a faster way 
-  ldr r9, [r1, r2] @ Load corresponding P2300 index into r9. Offset by pointer value
-
-  ldr r1, =part2_interval
-  ldr r0, [r1] @ Check if it is the interval, if 1 means it's interval, don't play and toggle the interval flag.
-  cmp r0, #1
-  bne not_interval
-  @ Case r0 = 1, is interval
-  mov r0, #0
-  str r0, [r1]
-  GPIOx_ODR_clear E, 14
-  bl sync
-  b handler_ending
-  not_interval:
-  @ compare new P2300 index (r9) to previous playing index (r2), if not equal, calculate how many time I need to increase in order to reach it
-  ldr r1, =previous_P2300_index
-  ldr r2, [r1]
-  @ if r9 == r2
-  cmp r9, r2
-  beq handler_play
-  bls less
-  @ if r9 > r2
-  sub r0, r9, r2
-  bl fire_pulse
-  b handler_play
-  less:
-  @ if r9 < r2, increase number = 8 - previous playing index(r2) + new P2300 index (r9) 
-  mov r0, #8
-  sub r0, r2
-  add r0, r9
-  bl fire_pulse
-
-  handler_play:
-  GPIOx_ODR_set E, 14 @ Turn on on/off line
-  bl sync
-  ldr r0, =previous_P2300_index
-  str r9, [r0]
-  @ The next sound should be a rest.
-  ldr r1, =part2_interval
-  mov r0, #1
-  str r0, [r1] 
-  bl increase_pointer
-  handler_ending:
-  pop {lr,r4-r10}
+push {lr}
+  EXTI_PR_clear_pending 1
+  pop {lr}
   bx lr
 .size EXTI1_IRQHandler, .-EXTI1_IRQHandler
 
@@ -183,74 +150,9 @@ pointer_outof_bound:
   bx lr
 .size pointer_outof_bound, .-pointer_outof_bound
 
-increase_pointer:
-  push {lr}
-  @ Load array poisiton into r0
-  ldr r1, =part2_song_pointer
-  ldr r0, [r1]
-
-  @ pointer++, if more than 18 (part-2 song array size), minus it back to 0
-  add r0, #1
-  cmp r0, #18
-  IT hi
-  blhi pointer_outof_bound
-  @ Store it back
-  str r0, [r1]
-  pop {lr}
-  bx lr
-
-.type fire_pulse, %function
-@ --parameters--
-@ r0: fire for how many times, r0 should be a positive number
-fire_pulse:
-  push {lr, r4}
-  mov r4, r0
-  fire_loop:
-  sub r4, #1
-  @ Send signal by create a pulse
-  GPIOx_ODR_set E, 15
-  GPIOx_ODR_clear E, 15
-  mov r0, #12
-  bl custom_sync
-  cmp r4, #0
-  bne fire_loop
-  pop {lr, r4}
-  bx lr
-.size fire_pulse, .-fire_pulse
-
-.type custom_sync, %function
-@ To make sure a interrupt is fully executed
-@ --parameters--
-@ r0: sync how many time
-custom_sync:
-  push {lr}
-  sync_start:
-  subs r0, #1
-  bls sync_end
-  push {r0}
-  bl sync
-  pop {r0}
-  b sync_start
-  sync_end:
-  pop {lr}
-  bx lr
-.size custom_sync, .-custom_sync
 
 .data
 .align 2
-
-@ Sender's Memory
-part2_song:
-@ P2300 index of the song
-.word 0, 2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 7, 6, 5, 4, 3, 2, 1, 0
-@ 1 means it is currently between two pitch, need to rest.
-part2_interval:
-.word 0
-part2_song_pointer:
-.word 0
-previous_P2300_index:
-.word 0
-
 @ Receiver's Memory
 @ Playing Flag. If 0 means don't play. If 1 means play
 playflag:
