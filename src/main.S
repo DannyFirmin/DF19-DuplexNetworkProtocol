@@ -73,13 +73,17 @@ push {lr,r4-r10}
   lsl r2, r0, #2 @ Calculate the offset based on pointer value, r2 = r0 * 4, a faster way 
   ldr r9, [r1, r2] @ Load corresponding P2300 index into r9. Offset by pointer value
 
-  cmp r9, #-1
-  bne not_rest
-  @ Condition met, turn off on/off line
+  ldr r1, =part1_interval
+  ldr r0, [r1] @ Check if it is the interval, if 1 means it's interval, don't play and toggle the interval flag.
+  cmp r0, #1
+  bne not_interval
+  @ Case r0 = 1, is interval
+  mov r0, #0
+  str r0, [r1]
   GPIOx_ODR_clear E, 14
   bl sync
   b handler_ending
-  not_rest:
+  not_interval:
   @ compare new P2300 index (r9) to previous playing index (r2), if not equal, calculate how many time I need to increase in order to reach it
   ldr r1, =previous_P2300_index
   ldr r2, [r1]
@@ -103,8 +107,12 @@ push {lr,r4-r10}
   bl sync
   ldr r0, =previous_P2300_index
   str r9, [r0]
-  handler_ending:
+  @ The next sound should be a rest.
+  ldr r1, =part1_interval
+  mov r0, #1
+  str r0, [r1] 
   bl increase_pointer
+  handler_ending:
   pop {lr,r4-r10}
   bx lr
 .size timer_handler, .-timer_handler
@@ -115,9 +123,9 @@ increase_pointer:
   ldr r1, =part1_song_pointer
   ldr r0, [r1]
 
-  @ pointer++, if more than 37, minus it back to 0
+  @ pointer++, if more than 18 (part-1 song array size), minus it back to 0
   add r0, #1
-  cmp r0, #37
+  cmp r0, #18
   IT hi
   blhi pointer_outof_bound
   @ Store it back
@@ -186,7 +194,6 @@ EXTI0_IRQHandler:
   bx lr
 .size EXTI0_IRQHandler, .-EXTI0_IRQHandler
 
-
 @ Receiver for Line "pitch change"
 .type EXTI3_IRQHandler, %function
 EXTI3_IRQHandler:
@@ -226,18 +233,22 @@ pointer_outof_bound:
   bx lr
 .size pointer_outof_bound, .-pointer_outof_bound
 
-
 .data
 .align 2
 
+@ Sender's Memory
 part1_song:
 @ P2300 index of the song
-.word 0, -1, 2, -1, 1, -1, 3, -1, 2, -1, 4, -1, 3, -1, 5, -1, 4, -1, 6, -1, 5, -1, 7, -1, 6, -1, 5, -1, 4, -1, 3, -1, 2, -1, 1, -1, 0, -1
+.word 0, 2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 7, 6, 5, 4, 3, 2, 1, 0
+@ 1 means it is currently between two pitch, need to rest.
+part1_interval:
+.word 0
 part1_song_pointer:
 .word 0
 previous_P2300_index:
 .word 0
 
+@ Receiver's Memory
 @ Playing Flag. If 0 means don't play. If 1 means play
 playflag:
 .word 0
