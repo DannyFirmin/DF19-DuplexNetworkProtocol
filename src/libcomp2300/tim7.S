@@ -94,9 +94,9 @@ tim7_init:
   @ put your code here if that's the case
 
   @ ====MY CODE STARTS====
-  mov r0, #55 @ TIM7 is at position 55 as mentioned above
-  mov r1, #3
-  bl NVIC_IPR_set_priority
+  @ mov r0, #55 @ TIM7 is at position 55 as mentioned above
+  @ mov r1, #3
+  @ bl NVIC_IPR_set_priority
   @ =====MY CODE ENDS=====
   bl sync
   pop {r4-r5, lr}
@@ -110,7 +110,6 @@ TIM7_IRQHandler:
   push {lr}
 
   @ Your interrupt handler code goes here
-  bl timer_handler  
 
   @ Clear interrupt (Section 29.4.4)
   ldr r0, =ADR_TIM7

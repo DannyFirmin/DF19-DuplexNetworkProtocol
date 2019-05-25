@@ -1,36 +1,45 @@
 .syntax unified
-.global main, EXTI0_IRQHandler, EXTI3_IRQHandler, timer_handler
+.global main, EXTI0_IRQHandler, EXTI1_IRQHandler, EXTI3_IRQHandler
 .include "libcomp2300/macros.S"
 
 @ --- PIN CONNECTIONS ---
 @ PE14 -> PD0
 @ PE15 -> PB3
+@ PE13 -> PH1
 
-/* Note on/off line, Sender: PE14, Receiver: PD0
- * Pitch change line, Sender: PE15, Receiver: PB3 */
+/* Control line, Sender: PE14, Receiver: PD0
+ * Data line, Sender: PE15, Receiver: PB3 
+ * Clock line, Sender: PE13, Receiver: PH1 */
 .type main, %function
 main:
   @ Enable SYSCFG clock
   RCC_APB2ENR_set 0
 
-  @ Turn GPIO ports B, D, E on
+  @ Turn GPIO ports B, D, E, H on
   GPIOx_clock_enable B
   GPIOx_clock_enable D
   GPIOx_clock_enable E
+  GPIOx_clock_enable H
 
-  GPIO_configure_output_pin E, 14 @ Note on/off line, Sender
-  GPIO_configure_output_pin E, 15 @ Pitch change line, Sender
+  GPIO_configure_output_pin E, 14 @ Control line, Sender
+  GPIO_configure_output_pin E, 15 @ Data line, Sender
+  GPIO_configure_output_pin E, 13 @ Clock line, Sender
 
-  @ Configure on/off line Receiver
+  @ Configure Control line Receiver
   GPIO_configure_input_pin_it D, 0
   EXTI_set_rising_edge_trigger 0
   EXTI_set_falling_edge_trigger 0
   NVIC_set ISER 6 @ Enable corresponding NVIC interrupt
 
-  @ Configure pitch change line Receiver
+  @ Configure Data line Receiver
   GPIO_configure_input_pin_it B, 3
   EXTI_set_rising_edge_trigger 3
   NVIC_set ISER 9
+
+  @ Configure Clock line Receiver
+  GPIO_configure_input_pin_it H, 1
+  EXTI_set_rising_edge_trigger 1
+  NVIC_set ISER 7
 
   @ Priority level: pitch changing interrupt(priority:1) > on/off interrupt(priority:2) > timer(priority:3)
   mov r0, #6
@@ -41,17 +50,11 @@ main:
   mov r1, #1
   bl NVIC_IPR_set_priority
 
-  @ Init Sound playing
-  bl init
-  ldr r1, =p2300_sequence
-  ldr r0, [r1]
-  mov r1, 0x7FFF
-  bl wave_change
+  mov r0, #7
+  mov r1, #1
+  bl NVIC_IPR_set_priority
 
-  @ Use Timer7, seconds between interrupts = 0.25s
-  mov r0, #20000
-  mov r1, #1000
-  bl tim7_init
+
 .size main, .-main
 
 @ waiting for a interrupt or playing the music
@@ -63,17 +66,41 @@ loop:
   bl wave_play_next_sample
   b loop
 
-.type timer_handler, %function
-@ Sender part. Called each 0.25s from TIM7_IRQHandler
-timer_handler:
+@ Receiver for "on/off" line
+.type EXTI0_IRQHandler, %function
+EXTI0_IRQHandler:
+  push {lr}
+  @ Load the play flag, change to 1 if the wave is high, change to 0 if the wave is low
+  GPIOx_IDR_read D, 0
+  cmp r0, #1
+  bne mute
+  @ if it is high
+  ldr r1, =playflag
+  mov r2, #1
+  str r2, [r1]
+  b exti0_end
+  mute:
+  @ if it is low
+  ldr r1, =playflag
+  mov r2, #0
+  str r2, [r1]
+  exti0_end:
+  EXTI_PR_clear_pending 0
+  pop {lr}
+  bx lr
+.size EXTI0_IRQHandler, .-EXTI0_IRQHandler
+
+@ Receiver for Line "Clock"
+.type EXTI1_IRQHandler, %function
+EXTI1_IRQHandler:
 push {lr,r4-r10}
-  ldr r1, =part1_song_pointer
+  ldr r1, =part2_song_pointer
   ldr r0, [r1] @ Load array poisiton into r0
-  ldr r1, =part1_song
+  ldr r1, =part2_song
   lsl r2, r0, #2 @ Calculate the offset based on pointer value, r2 = r0 * 4, a faster way 
   ldr r9, [r1, r2] @ Load corresponding P2300 index into r9. Offset by pointer value
 
-  ldr r1, =part1_interval
+  ldr r1, =part2_interval
   ldr r0, [r1] @ Check if it is the interval, if 1 means it's interval, don't play and toggle the interval flag.
   cmp r0, #1
   bne not_interval
@@ -108,22 +135,61 @@ push {lr,r4-r10}
   ldr r0, =previous_P2300_index
   str r9, [r0]
   @ The next sound should be a rest.
-  ldr r1, =part1_interval
+  ldr r1, =part2_interval
   mov r0, #1
   str r0, [r1] 
   bl increase_pointer
   handler_ending:
   pop {lr,r4-r10}
   bx lr
-.size timer_handler, .-timer_handler
+.size EXTI1_IRQHandler, .-EXTI1_IRQHandler
+
+@ Receiver for Line "pitch change"
+.type EXTI3_IRQHandler, %function
+EXTI3_IRQHandler:
+  push {lr}
+
+  @ Load array poisiton into r0
+  ldr r1, =p2300_sequence_pointer
+  ldr r0, [r1]
+  add r0, #1
+  cmp r0, #7
+  IT hi
+  blhi pointer_outof_bound
+  str r0, [r1]
+
+  @ Load frequency into r0
+  ldr r1, =p2300_sequence
+  lsl r2, r0, #2 @ Calculate the offset based on pointer value, r2 = r3 * 4, a faster way 
+  ldr r0, [r1, r2]
+  mov r1, 0x7FFF
+  bl wave_change
+
+  EXTI_PR_clear_pending 3
+  pop {lr}
+  bx lr
+.size EXTI3_IRQHandler, .-EXTI3_IRQHandler
+
+.type pointer_outof_bound, %function
+@ If pointer is more than the array size, make it back to 0
+@ --parameters--
+@ r0: out of bound pointer index
+@ --returns--
+@ r0: restore index to 0
+pointer_outof_bound:
+  push {lr}
+  mov r0, #0
+  pop {lr}
+  bx lr
+.size pointer_outof_bound, .-pointer_outof_bound
 
 increase_pointer:
   push {lr}
   @ Load array poisiton into r0
-  ldr r1, =part1_song_pointer
+  ldr r1, =part2_song_pointer
   ldr r0, [r1]
 
-  @ pointer++, if more than 18 (part-1 song array size), minus it back to 0
+  @ pointer++, if more than 18 (part-2 song array size), minus it back to 0
   add r0, #1
   cmp r0, #18
   IT hi
@@ -170,80 +236,17 @@ custom_sync:
   bx lr
 .size custom_sync, .-custom_sync
 
-@ Receiver for "on/off" line
-.type EXTI0_IRQHandler, %function
-EXTI0_IRQHandler:
-  push {lr}
-  @ Load the play flag, change to 1 if the wave is high, change to 0 if the wave is low
-  GPIOx_IDR_read D, 0
-  cmp r0, #1
-  bne mute
-  @ if it is high
-  ldr r1, =playflag
-  mov r2, #1
-  str r2, [r1]
-  b exti0_end
-  mute:
-  @ if it is low
-  ldr r1, =playflag
-  mov r2, #0
-  str r2, [r1]
-  exti0_end:
-  EXTI_PR_clear_pending 0
-  pop {lr}
-  bx lr
-.size EXTI0_IRQHandler, .-EXTI0_IRQHandler
-
-@ Receiver for Line "pitch change"
-.type EXTI3_IRQHandler, %function
-EXTI3_IRQHandler:
-  push {lr}
-
-  @ Load array poisiton into r0
-  ldr r1, =p2300_sequence_pointer
-  ldr r0, [r1]
-  add r0, #1
-  cmp r0, #7
-  IT hi
-  blhi pointer_outof_bound
-  str r0, [r1]
-
-  @ Load frequency into r0
-  ldr r1, =p2300_sequence
-  lsl r2, r0, #2 @ Calculate the offset based on pointer value, r2 = r3 * 4, a faster way 
-  ldr r0, [r1, r2]
-  mov r1, 0x7FFF
-  bl wave_change
-
-  EXTI_PR_clear_pending 3
-  pop {lr}
-  bx lr
-.size EXTI3_IRQHandler, .-EXTI3_IRQHandler
-
-.type pointer_outof_bound, %function
-@ If pointer is more than the array size, make it back to 0
-@ --parameters--
-@ r0: out of bound pointer index
-@ --returns--
-@ r0: restore index to 0
-pointer_outof_bound:
-  push {lr}
-  mov r0, #0
-  pop {lr}
-  bx lr
-.size pointer_outof_bound, .-pointer_outof_bound
-
 .data
 .align 2
 
 @ Sender's Memory
-part1_song:
+part2_song:
 @ P2300 index of the song
 .word 0, 2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 7, 6, 5, 4, 3, 2, 1, 0
 @ 1 means it is currently between two pitch, need to rest.
-part1_interval:
+part2_interval:
 .word 0
-part1_song_pointer:
+part2_song_pointer:
 .word 0
 previous_P2300_index:
 .word 0
