@@ -67,20 +67,19 @@ loop:
 @ Sender part. Called each 0.25s from TIM7_IRQHandler
 timer_handler:
 push {lr,r4-r10}
-  handler_beginning:
-  @ Load array poisiton into r0
   ldr r1, =part1_song_pointer
-  ldr r0, [r1]
-
-  @ Load corresponding P2300 index into r9
+  ldr r0, [r1] @ Load array poisiton into r0
   ldr r1, =part1_song
   lsl r2, r0, #2 @ Calculate the offset based on pointer value, r2 = r0 * 4, a faster way 
-  ldr r9, [r1, r2] @ offset by pointer value
+  ldr r9, [r1, r2] @ Load corresponding P2300 index into r9. Offset by pointer value
 
-  @ if -1, which is a rest, make the on/off singal fall and function ends
   cmp r9, #-1
-  beq onoff_fall
-
+  bne not_rest
+  @ Condition met, turn off on/off line
+  GPIOx_ODR_clear E, 14
+  bl sync
+  b handler_ending
+  not_rest:
   @ compare new P2300 index (r9) to previous playing index (r2), if not equal, calculate how many time I need to increase in order to reach it
   ldr r1, =previous_P2300_index
   ldr r2, [r1]
@@ -100,7 +99,8 @@ push {lr,r4-r10}
   bl fire_pulse
 
   handler_play:
-  bl onoff_raise
+  GPIOx_ODR_set E, 14 @ Turn on on/off line
+  bl sync
   ldr r0, =previous_P2300_index
   str r9, [r0]
   handler_ending:
@@ -161,18 +161,6 @@ custom_sync:
   pop {lr}
   bx lr
 .size custom_sync, .-custom_sync
-
-onoff_fall:
-  GPIOx_ODR_clear E, 14
-  bl sync
-  b handler_ending
-
-onoff_raise:
-  push {lr}
-  GPIOx_ODR_set E, 14
-  bl sync
-  pop {lr}
-  bx lr
 
 @ Receiver for "on/off" line
 .type EXTI0_IRQHandler, %function
@@ -243,6 +231,7 @@ pointer_outof_bound:
 .align 2
 
 part1_song:
+@ P2300 index of the song
 .word 0, -1, 2, -1, 1, -1, 3, -1, 2, -1, 4, -1, 3, -1, 5, -1, 4, -1, 6, -1, 5, -1, 7, -1, 6, -1, 5, -1, 4, -1, 3, -1, 2, -1, 1, -1, 0, -1
 part1_song_pointer:
 .word 0
