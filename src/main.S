@@ -85,22 +85,28 @@ loop:
   ldr r1, [r0]
   cmp r1, #1
   beq check_control
-
-  ldr r0, =data_received
-  lsl r2, r3, #2
-  ldr r1, [r0, r2]
-  mov r2, #1
-  udiv r2, r1, r2 @ r2 is loop how many time
+  
   push {r3}
-  bl play_note
   bl red_led_off
   bl green_led_on
   pop {r3}
+
+  ldr r0, =pitch_received
+  lsl r2, r3, #2
+  ldr r1, [r0, r2]
+  mov r2, #1
+  udiv r2, r1, r2 @ r2 is loop how many time, to fit in the previous function I made
+  push {r3}
+  bl play_note
+  pop {r3}
   add r3, #1
-  cmp r3, #4
-  bne temp
+  ldr r0, =data_received_count
+  ldr r1, [r0]
+  sub r1, 1
+  cmp r3, r1
+  blt not_end
   mov r3, 0
-  temp:
+  not_end:
   b check_control
 
 @ Receiver for Control line
@@ -173,12 +179,21 @@ finished_hword:
   cmp r4, #16
   bls assemble_data
   
+  @ Parity TODO
   ldr r1, =data_received_count
   ldr r2, [r1]
+  @ if r2 == 0, means it is the fisrt data
+  cmp r2, 0
+  bne not_first
+  ldr r1, =datalength
+  str r5, [r1]
+  b end_first
+  not_first:
+  sub r2, 1
   lsl r1, r2, #2
-  ldr r0, =data_received
+  ldr r0, =pitch_received
   str r5, [r0, r1]
-  
+  end_first:
   @ Received count ++
   ldr r1, =data_received_count
   ldr r2, [r1]
@@ -231,8 +246,11 @@ databit_received:
 clock_counter:
 .word 0
 
+datalength:
+.word 0
+
 data_received_count:
 .word 0
 
-data_received:
+pitch_received:
 @ Do not put any other label below this. This should always be the last one.
