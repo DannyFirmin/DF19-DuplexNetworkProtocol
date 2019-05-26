@@ -109,16 +109,21 @@ tim7_init:
 TIM7_IRQHandler:
   @ Your interrupt handler code goes here
   push {lr,r4-r10}
-
-  ldr r1, =array_pointer
-  ldr r0, [r1] @ Load array poisiton into r0
-  cmp r0, #0
-  bne not_first
-  @ if it's the first, turn on control line
-  GPIOx_ODR_set E, 14
-  bl sync
-  not_first:
+  ldr r1, = array_pointer
+  ldr r0, [r1]
+  lsl r2, r0, #2
+  ldr r1, =song_pitch_tosend
+  ldr r0, [r1, r2]
   bl send_bit
+
+  ldr r1, = array_pointer
+  ldr r0, [r1]
+  add r0, 1
+  str r0, [r1]
+
+  cmp r0, #4
+  IT eq
+  bleq tim7_stop
 
   @ Clear interrupt (Section 29.4.4)
   ldr r0, =ADR_TIM7
@@ -133,13 +138,13 @@ TIM7_IRQHandler:
 
 .type send_bit, %function
 @ --parameters--
-@ none
+@ r0: song pitch to send
 send_bit:
-  push {lr, r4}
+  push {lr, r4, r5}
+  mov r5, r0 @ r5 will always store the pitch until function returns
   mov r4, #15 @ left most bit first, position 15
   keep_sending:
-  ldr r1, =song_pitch_tosend
-  ldr r0, [r1]
+  mov r0, r5
   lsr r0, r4 @ shift right by the value in counter
   ands r0, 1 @ get the bit in r0
   @ if r0 == 1, set data line to 1
@@ -161,7 +166,7 @@ send_bit:
   @ if r4 >= 0, continue
   cmp r4, 0
   bge keep_sending
-  pop {lr, r4}
+  pop {lr, r4, r5}
   bx lr
 .size send_bit, .-send_bit
 
@@ -187,11 +192,11 @@ custom_sync:
 tim7_stop:
   push {lr}
   @ disable peripheral clock
-  @ RCC_APB1ENR_set 5
-  ldr r0, =ADR_RCC
-  ldr r1, =OFS_RCC_APB1ENR
-  ldr r2, =5
-  bl clear_bit
+  @ @ RCC_APB1ENR_set 5
+  @ ldr r0, =ADR_RCC
+  @ ldr r1, =OFS_RCC_APB1ENR
+  @ ldr r2, =5
+  @ bl clear_bit
 
   @ disable timer 7  (Section 29.4.1s)
   ldr r0, =ADR_TIM7
@@ -199,11 +204,14 @@ tim7_stop:
   mov r2, 0
   bl clear_bit
 
-  @ disable TIM7 DMA/interrupt (Section 29.4.3)
-  ldr r0, =ADR_TIM7
-  ldr r1, =OFS_TIMx_DIER
-  mov r2, 0
-  bl clear_bit
+  @ @ disable TIM7 DMA/interrupt (Section 29.4.3)
+  @ ldr r0, =ADR_TIM7
+  @ ldr r1, =OFS_TIMx_DIER
+  @ mov r2, 0
+  @ bl clear_bit
+
+  GPIOx_ODR_clear E, 14
+  bl sync
   pop {lr}
   bx lr
 .size tim7_stop, .-tim7_stop
@@ -212,7 +220,7 @@ tim7_stop:
 
 song_pitch_tosend:
 @ Frequency (Hz) Array. First element indicate the array length
-.word 250, 440, 0, 550
+.word 250, 440, 700, 550
 
 @ @ 0 means harmony is not needed for that poisition
 @ song_pitch2_tosend:

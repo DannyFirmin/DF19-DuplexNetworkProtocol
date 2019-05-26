@@ -26,15 +26,16 @@ main:
   GPIO_configure_output_pin E, 13 @ Clock line, Sender
 
   @ Configure Control line Receiver
+  GPIOx_ODR_set E, 14 @ Start from high 
   GPIO_configure_input_pin_it D, 0
-  @ EXTI_set_rising_edge_trigger 0
-  @ EXTI_set_falling_edge_trigger 0
+  EXTI_set_rising_edge_trigger 0
+  EXTI_set_falling_edge_trigger 0
   NVIC_set ISER 6 @ Enable corresponding NVIC interrupt
 
   @ Configure Data line Receiver
-  GPIO_configure_input_pin_it B, 3
+  GPIO_configure_input_pin B, 3
   @ EXTI_set_rising_edge_trigger 3
-  NVIC_set ISER 9
+  @ NVIC_set ISER 9
 
   @ Configure Clock line Receiver
   GPIO_configure_input_pin_it H, 1
@@ -46,9 +47,9 @@ main:
   mov r1, #3
   bl NVIC_IPR_set_priority
 
-  mov r0, #9
-  mov r1, #2
-  bl NVIC_IPR_set_priority
+  @ mov r0, #9
+  @ mov r1, #2
+  @ bl NVIC_IPR_set_priority
 
   mov r0, #7
   mov r1, #1
@@ -57,9 +58,9 @@ main:
  @ Init Sound playing
   bl init
   @ ldr r1, =p2300_sequence
-  ldr r0, [r1]
-  mov r1, 0x7FFF
-  bl wave_change
+  @ ldr r0, [r1]
+  @ mov r1, 0x7FFF
+  @ bl wave_change
 
   @ Use Timer7, seconds between interrupts = 0.0125s
   @ mov r0, #5000
@@ -73,29 +74,46 @@ main:
 
 @ waiting for a interrupt or playing the music
 loop:
-  ldr r0, =playflag
+  mov r3, #0
+  @ if control line is on, which means receiving data, don't play
+  @ if control line is off, which means data transmit success, start play
+  check_control:
+  ldr r0, =controlflag
   ldr r1, [r0]
   cmp r1, #1
-  bne loop
-  bl wave_play_next_sample
-  b loop
+  beq check_control
 
-@ Receiver for "on/off" line
+  ldr r0, =data_received
+  lsl r2, r3, #2
+  ldr r1, [r0, r2]
+  mov r2, #1
+  udiv r2, r1, r2 @ r2 is loop how many time
+  push {r3}
+  bl play_note
+  pop {r3}
+  add r3, #1
+  cmp r3, #4
+  bne temp
+  mov r3, 0
+  temp:
+  b check_control
+
+@ Receiver for Control line
 .type EXTI0_IRQHandler, %function
 EXTI0_IRQHandler:
   stmdb sp!,{lr}
-  @ Load the play flag, change to 1 if the wave is high, change to 0 if the wave is low
+  @ Load the control flag, change to 1 if the wave is high, change to 0 if the wave is low
   GPIOx_IDR_read D, 0
   cmp r0, #1
   bne mute
   @ if it is high
-  ldr r1, =playflag
+  ldr r1, =controlflag
   mov r2, #1
   str r2, [r1]
   b exti0_end
   mute:
   @ if it is low
-  ldr r1, =playflag
+  ldr r1, =controlflag
   mov r2, #0
   str r2, [r1]
   exti0_end:
@@ -118,7 +136,7 @@ EXTI1_IRQHandler:
   @ Increase clock counter
   add r2, 1
   cmp r2, #15
-  @ if r2 > 15
+  @ if r2 > 15, means finished sending a 16 bit data
   IT hi
   blhi finished_hword
   ldr r1, =clock_counter
@@ -150,8 +168,18 @@ finished_hword:
   cmp r4, #16
   bls assemble_data
   
+  ldr r1, =data_received_count
+  ldr r2, [r1]
+  lsl r1, r2, #2
   ldr r0, =data_received
-  str r5, [r0]
+  str r5, [r0, r1]
+  
+  @ Received count ++
+  ldr r1, =data_received_count
+  ldr r2, [r1]
+  add r2, #1
+  str r2, [r1]
+  @ Remember to clear count when read data received in other functions
 
   mov r2, 0
   pop {lr, r4, r5}
@@ -187,18 +215,19 @@ pointer_outof_bound:
 .data
 .align 2
 @ Receiver's Memory
-@ Playing Flag. If 0 means don't play. If 1 means play
-playflag:
-.word 0
+@ Control Flag. If 0 means control line is low. 1 means control line is high, it is high when start
+controlflag:
+.word 1
 
 @ Store the 16 bit data
 databit_received:
 .word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-databit_received_pointer:
-.word 0
-
-data_received:
-.word 0
 
 clock_counter:
 .word 0
+
+data_received_count:
+.word 0
+
+data_received:
+@ Do not put any other label below this. This should always be the last one.
