@@ -109,6 +109,7 @@ tim7_init:
 TIM7_IRQHandler:
   @ Your interrupt handler code goes here
   push {lr,r4-r10}
+  bl red_led_toggle
   ldr r1, = array_pointer
   ldr r0, [r1]
   lsl r2, r0, #2

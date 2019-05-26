@@ -55,6 +55,9 @@ main:
   mov r1, #1
   bl NVIC_IPR_set_priority
 
+  bl red_led_init
+  bl red_led_on
+  bl green_led_init
  @ Init Sound playing
   bl init
   @ ldr r1, =p2300_sequence
@@ -90,6 +93,8 @@ loop:
   udiv r2, r1, r2 @ r2 is loop how many time
   push {r3}
   bl play_note
+  bl red_led_off
+  bl green_led_on
   pop {r3}
   add r3, #1
   cmp r3, #4
