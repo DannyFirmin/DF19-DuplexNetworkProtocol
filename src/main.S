@@ -27,13 +27,13 @@ main:
 
   @ Configure Control line Receiver
   GPIO_configure_input_pin_it D, 0
-  EXTI_set_rising_edge_trigger 0
-  EXTI_set_falling_edge_trigger 0
+  @ EXTI_set_rising_edge_trigger 0
+  @ EXTI_set_falling_edge_trigger 0
   NVIC_set ISER 6 @ Enable corresponding NVIC interrupt
 
   @ Configure Data line Receiver
   GPIO_configure_input_pin_it B, 3
-  EXTI_set_rising_edge_trigger 3
+  @ EXTI_set_rising_edge_trigger 3
   NVIC_set ISER 9
 
   @ Configure Clock line Receiver
@@ -61,9 +61,9 @@ main:
   mov r1, 0x7FFF
   bl wave_change
 
-  @ Use Timer7, seconds between interrupts = 0.25s
-  mov r0, #20000
-  mov r1, #1000
+  @ Use Timer7, seconds between interrupts = 0.0125s
+  mov r0, #5000
+  mov r1, #200
   bl tim7_init
 
 
@@ -81,7 +81,7 @@ loop:
 @ Receiver for "on/off" line
 .type EXTI0_IRQHandler, %function
 EXTI0_IRQHandler:
-  push {lr}
+  stmdb sp!,{lr}
   @ Load the play flag, change to 1 if the wave is high, change to 0 if the wave is low
   GPIOx_IDR_read D, 0
   cmp r0, #1
@@ -98,23 +98,35 @@ EXTI0_IRQHandler:
   str r2, [r1]
   exti0_end:
   EXTI_PR_clear_pending 0
-  pop {lr}
+  ldmia sp!, {lr}
   bx lr
 .size EXTI0_IRQHandler, .-EXTI0_IRQHandler
 
 @ Receiver for Line "Clock"
 .type EXTI1_IRQHandler, %function
 EXTI1_IRQHandler:
-push {lr}
+  stmdb sp!,{lr}
+  GPIOx_IDR_read B, 3 @ Read from data line
+  ldr r1, =clock_counter
+  ldr r2, [r1] @ Counter
+  lsl r2, r2, #2 @ Calculate the offset based on pointer value, r2 = r2 * 4, a faster way 
+  ldr r3, =data_received
+  str r0, [r3, r2] @ Store this bit to stack
+
+  @ Increase clock counter
+  add r2, 1
+  @ if r2 > 15
+  @ str r2, r1 
+
   EXTI_PR_clear_pending 1
-  pop {lr}
+  ldmia sp!, {lr}
   bx lr
 .size EXTI1_IRQHandler, .-EXTI1_IRQHandler
 
 @ Receiver for Line "pitch change"
 .type EXTI3_IRQHandler, %function
 EXTI3_IRQHandler:
-  push {lr}
+  stmdb sp!,{lr}
 
   @ Load array poisiton into r0
   ldr r1, =p2300_sequence_pointer
@@ -127,13 +139,13 @@ EXTI3_IRQHandler:
 
   @ Load frequency into r0
   ldr r1, =p2300_sequence
-  lsl r2, r0, #2 @ Calculate the offset based on pointer value, r2 = r3 * 4, a faster way 
+  lsl r2, r0, #2 @ Calculate the offset based on pointer value, r2 = r0 * 4, a faster way 
   ldr r0, [r1, r2]
   mov r1, 0x7FFF
   bl wave_change
 
   EXTI_PR_clear_pending 3
-  pop {lr}
+  ldmia sp!, {lr}
   bx lr
 .size EXTI3_IRQHandler, .-EXTI3_IRQHandler
 
@@ -157,8 +169,16 @@ pointer_outof_bound:
 @ Playing Flag. If 0 means don't play. If 1 means play
 playflag:
 .word 0
-@ P2300 defined pitch(Hz) scaled by 100
-p2300_sequence:
-.word 22000, 24694, 26163, 29366, 32963, 36999, 39200, 44000
-p2300_sequence_pointer:
+
+@ Store the 16 bit data
+data_received:
+.word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+data_received_pointer:
+.word 0
+
+clock_counter:
+.word 0
+
+@ The memory address of the start of the array
+array_sp:
 .word 0

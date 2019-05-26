@@ -16,9 +16,9 @@ collaboration:
 # add as many "url+licence+comment" entries as necessary
 # (or remove it altogether if you haven't used any external code)
 code:
-  - comment:
-    url:
-    licence:
+  - comment: play_note function in sequencer.S is from my assignment 2
+    url: N/A
+    licence: The author of the code, which is me, only licence myself to use it
 
 
 # add as many "url+licence+comment" entries as necessary
@@ -30,5 +30,5 @@ assets:
 
 
 # sign *your* name and uid here
-name:
-uid:
+name: Danny Feng
+uid: u6611178

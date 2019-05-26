@@ -109,52 +109,68 @@ tim7_init:
 TIM7_IRQHandler:
   @ Your interrupt handler code goes here
   push {lr,r4-r10}
-  ldr r1, =part2_song_pointer
+
+
+  ldr r1, =array_pointer
   ldr r0, [r1] @ Load array poisiton into r0
-  ldr r1, =part2_song
-  lsl r2, r0, #2 @ Calculate the offset based on pointer value, r2 = r0 * 4, a faster way 
-  ldr r9, [r1, r2] @ Load corresponding P2300 index into r9. Offset by pointer value
-
-  ldr r1, =part2_interval
-  ldr r0, [r1] @ Check if it is the interval, if 1 means it's interval, don't play and toggle the interval flag.
-  cmp r0, #1
-  bne not_interval
-  @ Case r0 = 1, is interval
-  mov r0, #0
-  str r0, [r1]
-  GPIOx_ODR_clear E, 14
+  @ Turn on control line
+  cmp r0, #0
+  bne not_first
+  @ if it's the first
+  GPIOx_ODR_set E, 14
   bl sync
-  b handler_ending
-  not_interval:
-  @ compare new P2300 index (r9) to previous playing index (r2), if not equal, calculate how many time I need to increase in order to reach it
-  ldr r1, =previous_P2300_index
-  ldr r2, [r1]
-  @ if r9 == r2
-  cmp r9, r2
-  beq handler_play
-  bls less
-  @ if r9 > r2
-  sub r0, r9, r2
-  bl fire_pulse
-  b handler_play
-  less:
-  @ if r9 < r2, increase number = 8 - previous playing index(r2) + new P2300 index (r9) 
-  mov r0, #8
-  sub r0, r2
-  add r0, r9
-  bl fire_pulse
+  not_first:
+  ldr r1, =song_pitch_tosend
+  ldr r0, [r1]
+  bl send_bit
 
-  handler_play:
-  GPIOx_ODR_set E, 14 @ Turn on on/off line
-  bl sync
-  ldr r0, =previous_P2300_index
-  str r9, [r0]
-  @ The next sound should be a rest.
-  ldr r1, =part2_interval
-  mov r0, #1
-  str r0, [r1] 
-  bl increase_pointer
-  handler_ending:
+
+  @ ldr r1, =part2_song_pointer
+  @ ldr r0, [r1] @ Load array poisiton into r0
+  @ ldr r1, =part2_song
+  @ lsl r2, r0, #2 @ Calculate the offset based on pointer value, r2 = r0 * 4, a faster way 
+  @ ldr r9, [r1, r2] @ Load corresponding P2300 index into r9. Offset by pointer value
+
+  @ ldr r1, =part2_interval
+  @ ldr r0, [r1] @ Check if it is the interval, if 1 means it's interval, don't play and toggle the interval flag.
+  @ cmp r0, #1
+  @ bne not_interval
+  @ @ Case r0 = 1, is interval
+  @ mov r0, #0
+  @ str r0, [r1]
+  @ GPIOx_ODR_clear E, 14
+  @ bl sync
+  @ b handler_ending
+  @ not_interval:
+  @ @ compare new P2300 index (r9) to previous playing index (r2), if not equal, calculate how many time I need to increase in order to reach it
+  @ ldr r1, =previous_P2300_index
+  @ ldr r2, [r1]
+  @ @ if r9 == r2
+  @ cmp r9, r2
+  @ beq handler_play
+  @ bls less
+  @ @ if r9 > r2
+  @ sub r0, r9, r2
+  @ bl fire_pulse
+  @ b handler_play
+  @ less:
+  @ @ if r9 < r2, increase number = 8 - previous playing index(r2) + new P2300 index (r9) 
+  @ mov r0, #8
+  @ sub r0, r2
+  @ add r0, r9
+  @ bl fire_pulse
+
+  @ handler_play:
+  @ GPIOx_ODR_set E, 14 @ Turn on on/off line
+  @ bl sync
+  @ ldr r0, =previous_P2300_index
+  @ str r9, [r0]
+  @ @ The next sound should be a rest.
+  @ ldr r1, =part2_interval
+  @ mov r0, #1
+  @ str r0, [r1] 
+  @ bl increase_pointer
+  @ handler_ending:
   @ Clear interrupt (Section 29.4.4)
   ldr r0, =ADR_TIM7
   ldr r1, =OFS_TIMx_SR
@@ -165,40 +181,52 @@ TIM7_IRQHandler:
   bx lr
 .size TIM7_IRQHandler, .-TIM7_IRQHandler
 
-increase_pointer:
-  push {lr}
-  @ Load array poisiton into r0
-  ldr r1, =part2_song_pointer
-  ldr r0, [r1]
+@ increase_pointer:
+@   push {lr}
+@   @ Load array poisiton into r0
+@   ldr r1, =part2_song_pointer
+@   ldr r0, [r1]
 
-  @ pointer++, if more than 18 (part-2 song array size), minus it back to 0
-  add r0, #1
-  cmp r0, #18
-  IT hi
-  blhi pointer_outof_bound
-  @ Store it back
-  str r0, [r1]
-  pop {lr}
-  bx lr
+@   @ pointer++, if more than 18 (part-2 song array size), minus it back to 0
+@   add r0, #1
+@   cmp r0, #18
+@   IT hi
+@   blhi pointer_outof_bound
+@   @ Store it back
+@   str r0, [r1]
+@   pop {lr}
+@   bx lr
 
-.type fire_pulse, %function
+.type send_bit, %function
 @ --parameters--
-@ r0: fire for how many times, r0 should be a positive number
-fire_pulse:
+@ r0: the half word to send
+send_bit:
   push {lr, r4}
-  mov r4, r0
-  fire_loop:
-  sub r4, #1
-  @ Send signal by create a pulse
+  mov r4, #15 @ left most bit first, position 15
+  keep_sending:
+  lsr r0, r4 @ shift right by the value in counter
+  ands r0, 1 @ get the bit in r0
+  @ if r0 == 1, set data line to 1
+  cmp r0, #1
+  bne clear_data @ if r0 != 1, clear data line to 0
   GPIOx_ODR_set E, 15
+  b finished_set
+  clear_data:
   GPIOx_ODR_clear E, 15
-  mov r0, #12
-  bl custom_sync
-  cmp r4, #0
-  bne fire_loop
+  finished_set:
+  @ Fire it! Trigger clock intrerupt
+  GPIOx_ODR_set E, 13
+  bl sync
+  GPIOx_ODR_clear E, 13
+  bl sync
+
+  sub r4, 1
+  @ if r4 >= 0, continue
+  cmp r4, 0
+  @ bge keep_sending
   pop {lr, r4}
   bx lr
-.size fire_pulse, .-fire_pulse
+.size send_bit, .-send_bit
 
 .type custom_sync, %function
 @ To make sure a interrupt is fully executed
@@ -218,16 +246,46 @@ custom_sync:
   bx lr
 .size custom_sync, .-custom_sync
 
+.type tim7_stop, %function
+tim7_stop:
+  push {lr}
+  @ disable peripheral clock
+  @ RCC_APB1ENR_set 5
+  ldr r0, =ADR_RCC
+  ldr r1, =OFS_RCC_APB1ENR
+  ldr r2, =5
+  bl clear_bit
+
+  @ disable timer 7  (Section 29.4.1s)
+  ldr r0, =ADR_TIM7
+  ldr r1, =OFS_TIMx_CR1
+  mov r2, 0
+  bl clear_bit
+
+  @ disable TIM7 DMA/interrupt (Section 29.4.3)
+  ldr r0, =ADR_TIM7
+  ldr r1, =OFS_TIMx_DIER
+  mov r2, 0
+  bl clear_bit
+  pop {lr}
+  bx lr
+.size tim7_stop, .-tim7_stop
+@ Sender's Memory
 .data
 
-@ Sender's Memory
-part2_song:
-@ P2300 index of the song
-.word 0, 2, 1, 3, 2, 4, 3, 5, 4, 6, 5, 7, 6, 5, 4, 3, 2, 1, 0
-@ 1 means it is currently between two pitch, need to rest.
-part2_interval:
-.word 0
-part2_song_pointer:
-.word 0
-previous_P2300_index:
+song_pitch_tosend:
+@ Frequency (Hz) Array. First element indicate the array length
+.word 32768, 440, 0, 550
+
+@ @ 0 means harmony is not needed for that poisition
+@ song_pitch2_tosend:
+@ .word 3, 0, 220, 0
+
+@ Duration divisor. If it not a rest, 4 = 0.25s, 2 = 0.5s, 1 = 1s
+@ If it is a rest, 12000 = 0.25s, 48000 = 1s
+@ This is to fit the foolish sequencer function I designed before
+rest_time_tosend:
+.word 3, 1, 12000, 1
+
+array_pointer:
 .word 0
