@@ -1,5 +1,5 @@
 .syntax unified
-.global main, EXTI0_IRQHandler, EXTI1_IRQHandler, EXTI3_IRQHandler, pointer_outof_bound
+.global main, EXTI0_IRQHandler, EXTI1_IRQHandler, EXTI3_IRQHandler, pointer_outof_bound, parity_check
 .include "libcomp2300/macros.S"
 
 @ --- PIN CONNECTIONS ---
@@ -56,8 +56,9 @@ main:
   bl NVIC_IPR_set_priority
 
   bl red_led_init
-  bl red_led_on
   bl green_led_init
+  bl red_led_on
+
  @ Init Sound playing
   bl init
   @ ldr r1, =p2300_sequence
@@ -68,6 +69,7 @@ main:
   @ Use Timer7, seconds between interrupts = 0.0125s
   @ mov r0, #5000
   @ mov r1, #200
+  @ Use the code below to if you want it to send data slower
   mov r0, #10000
   mov r1, #8000
   bl tim7_init
@@ -89,6 +91,7 @@ loop:
   push {r3}
   bl red_led_off
   bl green_led_on
+  bl clean_up
   pop {r3}
 
   ldr r0, =pitch_received
@@ -100,9 +103,8 @@ loop:
   bl play_note
   pop {r3}
   add r3, #1
-  ldr r0, =data_received_count
+  ldr r0, =datalength
   ldr r1, [r0]
-  sub r1, 1
   cmp r3, r1
   blt not_end
   mov r3, 0
@@ -136,14 +138,20 @@ EXTI0_IRQHandler:
 @ Receiver for Line "Clock"
 .type EXTI1_IRQHandler, %function
 EXTI1_IRQHandler:
-  stmdb sp!,{lr}
-
+  stmdb sp!,{lr, r4-r6}
+  @ if parity check is not -1, means now it is the time to do parity check
+  ldr r0, =receiver_parity
+  ldr r1, [r0]
+  ldr r2, =#-1
+  cmp r1, r2
+  bne parity_received
+  reading:
   GPIOx_IDR_read B, 3 @ Read from data line
   ldr r1, =clock_counter
   ldr r2, [r1] @ Counter
   lsl r4, r2, #2 @ Calculate the offset based on pointer value, r4 = r2 * 4, a faster way 
   ldr r3, =databit_received
-  str r0, [r3, r4] @ Store this bit to stack
+  str r0, [r3, r4] @ Store this bit to memory
   @ Increase clock counter
   add r2, 1
   cmp r2, #15
@@ -152,8 +160,20 @@ EXTI1_IRQHandler:
   blhi finished_hword
   ldr r1, =clock_counter
   str r2, [r1]
+  b exti1_end
+  parity_received:
+  ldr r1, =parity_state 
+  ldr r0, [r1]
+  cmp r0, 0 @ if it is the first time doing parity, we need to clear the clock cunter
+  IT eq
+  bleq clean_up
+  ldr r1, =parity_state 
+  mov r0, 1
+  str r0, [r1]  
+  b reading
+  exti1_end:
   EXTI_PR_clear_pending 1
-  ldmia sp!, {lr}
+  ldmia sp!, {lr, r4-r6}
   bx lr
 .size EXTI1_IRQHandler, .-EXTI1_IRQHandler
 
@@ -161,10 +181,14 @@ EXTI1_IRQHandler:
 
 .type finished_hword, %function
 @ Finished sending 16 bit. Clean up. And assemble the data
+@ It will calculate the parity and store it
+@ --parameters--
+@ none
 @ --returns--
+@ r1: Assembled data - currently doesn't used
 @ r2: 0, in order to reset the pointer
 finished_hword:
-  push {lr, r4, r5}
+  push {lr, r4-r6}
   mov r4, #0 @ local counter
   mov r5, #0 @ Assembled data
   assemble_data:
@@ -179,7 +203,12 @@ finished_hword:
   cmp r4, #16
   bls assemble_data
   
-  @ Parity TODO
+  @ if parity_state is 1, do not store parity as pitch
+  ldr r1, =parity_state 
+  ldr r0, [r1]
+  cmp r0, 1
+  beq parity_case
+
   ldr r1, =data_received_count
   ldr r2, [r1]
   @ if r2 == 0, means it is the fisrt data
@@ -192,7 +221,25 @@ finished_hword:
   sub r2, 1
   lsl r1, r2, #2
   ldr r0, =pitch_received
+
   str r5, [r0, r1]
+  b end_first
+
+  parity_case:
+  ldr r1, =parity_state @ clear partiy state
+  mov r0, 0
+  str r0, [r1]  
+
+  ldr r1, =receiver_parity
+  ldr r6, [r1]
+  ldr r0, =#-1
+  str r0, [r1]
+
+  cmp r5, r6
+  IT ne
+  blne transmit_error
+  b pass
+
   end_first:
   @ Received count ++
   ldr r1, =data_received_count
@@ -200,9 +247,16 @@ finished_hword:
   add r2, #1
   str r2, [r1]
   @ Remember to clear count when read data received in other functions
-
+ 
+  @ Calculate and store parity
+  mov r0, r5
+  bl parity_check
+  ldr r1, =receiver_parity
+  str r0, [r1]
+  pass:
+  mov r1, r5
   mov r2, 0
-  pop {lr, r4, r5}
+  pop {lr, r4-r6}
   bx lr
 .size finished_hword, .-finished_hword
 
@@ -216,6 +270,97 @@ EXTI3_IRQHandler:
   ldmia sp!, {lr}
   bx lr
 .size EXTI3_IRQHandler, .-EXTI3_IRQHandler
+
+
+.type transmit_error, %function
+@ Parity check failed
+transmit_error:
+  stmdb sp!,{lr, r4}
+  mov r4, #2
+  error_blink:
+  bl green_led_off
+  bl red_led_off
+  ldr r0, =#2000000
+  bl custom_sync
+  bl green_led_on
+  bl red_led_on
+  ldr r0, =#2000000
+  bl custom_sync
+  subs r4, 1
+  bpl error_blink
+
+  bl restore
+
+  ldmia sp!, {lr, r4}
+  bx lr
+.size transmit_error, .-transmit_error
+.type clean_up, %function
+@ Clean up and get ready for next transmit
+clean_up:
+  stmdb sp!,{lr}
+
+  ldr r1, =clock_counter
+  mov r0, 0
+  str r0, [r1]
+
+  ldmia sp!, {lr}
+  bx lr
+.size clean_up, .-clean_up
+
+.type restore, %function
+@ When error happens, restore everything
+restore:
+  stmdb sp!,{lr}
+  bl red_led_off
+  bl green_led_off
+  bl clean_up
+
+  ldr r1, =controlflag
+  mov r0, 1
+  str r0, [r1]
+
+  ldr r1, =parity_state
+  mov r0, 0
+  str r0, [r1]
+
+  ldr r1, =datalength
+  ldr r2, =data_received_count
+  mov r0, 0
+  str r0, [r1]
+  str r0, [r2]
+
+  ldr r1, =receiver_parity
+  ldr r6, [r1]
+  ldr r0, =#-1
+  str r0, [r1]
+
+  ldmia sp!, {lr}
+  bx lr
+.size restore, .-restore
+
+.type parity_check, %function
+@ Calculate the checksum of a data
+@ --parameters--
+@ r0 : the 16 bit data would like to calculate its checksum
+@ --returns--
+@ r0 : result of the checksum
+
+parity_check:
+  stmdb sp!,{lr, r4-r6}
+  mov r4, r0 @ store the data
+  mov r5, #15 @ local counter
+  mov r6, 0 @ store previous xor result
+  parity_check_loop:
+  mov r0, r4
+  lsr r0, r5 @ shift right by the value in counter
+  eor r6, r0, r6 @ Do XOR
+  sub r5, 1
+  cmp r5, 0
+  bge parity_check_loop
+  mov r0, r6
+  ldmia sp!, {lr, r4-r6}
+  bx lr
+.size parity_check, .-parity_check
 
 .type pointer_outof_bound, %function
 @ If pointer is more than the array size, make it back to 0
@@ -237,20 +382,35 @@ pointer_outof_bound:
 @ Receiver's Memory
 @ Control Flag. If 0 means control line is low. 1 means control line is high, it is high when start
 controlflag:
-.word 1
+  .word 1
 
 @ Store the 16 bit data
 databit_received:
-.word 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+  .word -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
 
 clock_counter:
-.word 0
+  .word 0
 
 datalength:
-.word 0
+  .word 0
 
-data_received_count:
-.word 0
+receiver_parity: @ The parity that reciver calculated based on the previous sent data
+  .word -1
 
+@ sender_parity: @ The parity that the sender send to reciver directly
+@ .word -2
+
+parity_state: @ 1 means it's in parity sending/receiving state, so no need to check parity for a parity
+  .word 0
+
+data_received_count: @ not include first data, which represent length
+  .word 0
+
+@ Reserve memory (Heap)
+@ Reference the answers under my post in COMP2300 piazza https://piazza.com/class/js9iyij0aiy637?cid=541
 pitch_received:
-@ Do not put any other label below this. This should always be the last one.
+// Heap is the area in memory where you can create arbitrarily large data structures (until you run out of space).
+  .word 0
+.skip 12000 // Allocate 12kB of memory starting at the heap label
+end_of_heap:
+  .word 0xFFFFFFFF // needed to stop the assembler from removing labels you don't use.

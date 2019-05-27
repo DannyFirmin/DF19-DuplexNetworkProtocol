@@ -8,7 +8,7 @@
 @ an update event is triggered and an interrupt is fired.
 
 @ --------------------- Module Interface --------------------
-.global tim7_init, TIM7_IRQHandler
+.global tim7_init, TIM7_IRQHandler, custom_sync
 
 @ --------------------- Implementation --------------------
 .include "libcomp2300/macros.S"
@@ -143,9 +143,10 @@ TIM7_IRQHandler:
 @ --parameters--
 @ r0: song pitch to send
 send_bit:
-  push {lr, r4, r5}
+  push {lr, r4-r6}
   mov r5, r0 @ r5 will always store the pitch until function returns
   mov r4, #15 @ left most bit first, position 15
+  mov r6, 0 @ 0 means sending pitch, 1 means sending parity
   keep_sending:
   mov r0, r5
   lsr r0, r4 @ shift right by the value in counter
@@ -161,7 +162,8 @@ send_bit:
   @ Fire it! Trigger clock intrerupt
   push {r4}
   GPIOx_ODR_set E, 13
-  bl sync
+  mov r0, #12
+  bl custom_sync
   GPIOx_ODR_clear E, 13
   bl sync
   pop {r4}
@@ -169,7 +171,20 @@ send_bit:
   @ if r4 >= 0, continue
   cmp r4, 0
   bge keep_sending
-  pop {lr, r4, r5}
+
+  cmp r6, 1 @ 1 means don't need to calculate the parity of parity
+  beq send_end
+  @ Finishing
+  mov r0, #24
+  bl custom_sync
+  mov r0, r5 @ load the 16 bit sent data
+  bl parity_check
+  mov r5, r0 @ send the parity check
+  mov r6, 1
+  mov r4, #15
+  b keep_sending
+  send_end:
+  pop {lr, r4-r6}
   bx lr
 .size send_bit, .-send_bit
 
@@ -211,7 +226,7 @@ tim7_stop:
 
 song_pitch_tosend:
 @ Frequency (Hz) Array. First element indicate the array length
-.word 3, 440, 700, 550
+  .word 9, 100, 200, 300, 400, 500, 600, 700, 800, 900
 
 @ @ 0 means harmony is not needed for that poisition
 @ song_pitch2_tosend:
@@ -221,7 +236,7 @@ song_pitch_tosend:
 @ If it is a rest, 12000 = 0.25s, 48000 = 1s
 @ This is to fit the foolish sequencer function I designed before
 rest_time_tosend:
-.word 3, 1, 12000, 1
+  .word 3, 1, 12000, 1
 
 array_pointer:
-.word 0
+  .word 0

@@ -5,28 +5,15 @@ declaration: >-
   I declare that everything I have submitted in this assignment is entirely my
   own work, with the following exceptions:
 
-
-# add as many "name+comment" entries as necessary
-# (or remove it altogether if you haven't collaborated with anyone)
-collaboration:
-  - name:
-    comment: >-
-
-
-# add as many "url+licence+comment" entries as necessary
-# (or remove it altogether if you haven't used any external code)
 code:
   - comment: play_note function in sequencer.S is from my assignment 2
     url: N/A
     licence: The author of the code, which is me, only licence myself to use it
 
-
-# add as many "url+licence+comment" entries as necessary
-# (or remove it altogether if you haven't used any external assets)
-assets:
-  - comment:
-    url:
-    licence:
+code:
+  - comment: Reserve 12kB of memory at the end of main.S, from COMP2300 piazza post
+    url: https://piazza.com/class/js9iyij0aiy637?cid=541
+    licence: N/A
 
 
 # sign *your* name and uid here
