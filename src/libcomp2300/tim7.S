@@ -8,7 +8,7 @@
 @ an update event is triggered and an interrupt is fired.
 
 @ --------------------- Module Interface --------------------
-.global tim7_init, TIM7_IRQHandler, custom_sync
+.global tim7_init, TIM7_IRQHandler, custom_sync, reset_sender
 
 @ --------------------- Implementation --------------------
 .include "libcomp2300/macros.S"
@@ -146,7 +146,7 @@ send_bit:
   push {lr, r4-r6}
   mov r5, r0 @ r5 will always store the pitch until function returns
   mov r4, #15 @ left most bit first, position 15
-  mov r6, 0 @ 0 means sending pitch, 1 means sending parity
+  mov r6, 0 @ 0 means sending pitch, 1 means sending checksum
   keep_sending:
   mov r0, r5
   lsr r0, r4 @ shift right by the value in counter
@@ -172,14 +172,14 @@ send_bit:
   cmp r4, 0
   bge keep_sending
 
-  cmp r6, 1 @ 1 means don't need to calculate the parity of parity
+  cmp r6, 1 @ 1 means don't need to calculate the checksum of checksum
   beq send_end
   @ Finishing
   mov r0, #24
   bl custom_sync
   mov r0, r5 @ load the 16 bit sent data
-  bl parity_check
-  mov r5, r0 @ send the parity check
+  bl checksum_xor
+  mov r5, r0 @ send the checksum result
   mov r6, 1
   mov r4, #15
   b keep_sending
@@ -206,6 +206,44 @@ custom_sync:
   bx lr
 .size custom_sync, .-custom_sync
 
+.type reset_sender, %function
+@ To make sure a interrupt is fully executed
+@ --parameters--
+@ r0: sync how many time
+reset_sender:
+  push {lr}
+  ldr r1, =array_pointer
+  ldr r0, [r1]
+  sub r0, 1
+  str r0, [r1]
+  
+  @ Clear interrupt (Section 29.4.4)
+  ldr r0, =ADR_TIM7
+  ldr r1, =OFS_TIMx_SR
+  mov r2, 0
+  bl clear_bit
+
+  mov r4, 0
+  mov r5, 0
+  mov r6, 0
+
+  ldr r0, =ADR_TIM7
+  ldr r1, =OFS_TIMx_CR1
+  mov r2, 0
+  bl set_bit
+
+  @ RESET BOARD
+  ldr r0, =0xE000ED0C
+  mov r2, #16
+  ldr r3, =0x05FA
+  lsl r3, r2
+  orr r3, 0b100
+  str r3, [r0]
+  bl sync
+  pop {lr}
+  bx lr
+.size reset_sender, .-reset_sender
+
 .type tim7_stop, %function
 tim7_stop:
   push {lr}
@@ -227,16 +265,6 @@ tim7_stop:
 song_pitch_tosend:
 @ Frequency (Hz) Array. First element indicate the array length
   .word 9, 100, 200, 300, 400, 500, 600, 700, 800, 900
-
-@ @ 0 means harmony is not needed for that poisition
-@ song_pitch2_tosend:
-@ .word 3, 0, 220, 0
-
-@ Duration divisor. If it not a rest, 4 = 0.25s, 2 = 0.5s, 1 = 1s
-@ If it is a rest, 12000 = 0.25s, 48000 = 1s
-@ This is to fit the foolish sequencer function I designed before
-rest_time_tosend:
-  .word 3, 1, 12000, 1
 
 array_pointer:
   .word 0
